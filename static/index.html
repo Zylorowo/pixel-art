@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <!-- user-scalable=no: Das Zoomen übernimmt unsere Leinwand selbst. Sonst
+       zoomt der Browser die ganze Seite mitsamt Menüs. -->
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <title>Pixelkrieg</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header id="topbar">
+    <strong class="brand">Pixelkrieg</strong>
+    <span id="event-status" class="muted"></span>
+    <span id="conn" class="conn off" title="Live-Verbindung">●</span>
+    <div id="account">
+      <form id="login-form" hidden>
+        <input id="login-handle" placeholder="Dein Name" maxlength="24" autocomplete="nickname" required>
+        <button type="submit">Einloggen</button>
+      </form>
+      <span id="me" hidden>
+        <span id="me-handle"></span>
+        <b id="me-balance"></b>
+        <button id="topup-btn" type="button">Aufladen</button>
+      </span>
+    </div>
+  </header>
+
+  <main id="stage">
+    <canvas id="board"></canvas>
+    <div id="toast" hidden></div>
+  </main>
+
+  <footer id="bottombar">
+    <div id="palette" role="radiogroup" aria-label="Farbe"></div>
+    <div id="actions">
+      <span id="info">Tippe auf ein Pixel</span>
+      <label class="toggle"><input type="checkbox" id="heat-toggle"> Preiskarte</label>
+      <button id="paint-btn" type="button" disabled>Malen</button>
+    </div>
+  </footer>
+
+  <dialog id="topup-dialog">
+    <form method="dialog" id="topup-form">
+      <h2>Guthaben aufladen</h2>
+      <p class="muted" id="topup-cap"></p>
+      <div id="topup-packages"></div>
+      <label class="age">
+        <input type="checkbox" id="topup-age">
+        Ich bin mindestens 18 Jahre alt <b>oder</b> meine Eltern haben mir die Aufladung erlaubt.
+      </label>
+      <p class="warn">Unter 18 brauchst du die Erlaubnis deiner Eltern, bevor du Geld ausgibst.</p>
+      <div class="row">
+        <button value="cancel" type="submit">Abbrechen</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
