@@ -13,7 +13,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 
-COOKIE_NAME = "pk_session"
+COOKIE_NAME = "pw_session"
 
 
 def make_token(secret: str, user_id: int) -> str:

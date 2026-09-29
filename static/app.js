@@ -1,96 +1,54 @@
 "use strict";
 /*
- * Pixelkrieg-Frontend. Vanilla JS, kein Framework.
+ * Pixel-War-Leinwand. Vanilla JS, kein Framework. Braucht common.js.
  *
  * Wichtigste Regel: Das Frontend berechnet NIE Preise. Es zeigt nur an, was der
- * Server über /api/zones und den WebSocket meldet, und schickt beim Malen den
+ * Server über /api/prices und den WebSocket meldet, und schickt beim Malen den
  * angezeigten Preis mit. Ist der inzwischen gestiegen, lehnt der Server ab.
  *
  * Darstellung: Die Leinwand liegt als 400×400-Bild in einem unsichtbaren
  * "Offscreen"-Canvas (1 Bildpunkt = 1 Pixel). Der sichtbare Canvas zeichnet
  * dieses Bild nur vergrößert und verschoben. Zoomen/Verschieben ändert also nur
- * zwei Zahlen (scale, ox/oy) – das ist auch auf dem Handy flüssig.
+ * drei Zahlen (scale, ox, oy) – das ist auch auf dem Handy flüssig.
+ * Die Preiskarte ist ein zweites Offscreen-Bild, das darübergelegt wird.
  */
-
-const $ = (id) => document.getElementById(id);
 
 const state = {
   size: 400,
-  zoneSize: 20,
-  zonesPerSide: 20,
   palette: [],          // Hex-Strings, Index 0 = leer
   rgb: [],              // [r, g, b] je Index
   pixels: null,         // Uint8Array, ein Farbindex pro Pixel, Zeile für Zeile
-  zonePrice: null,      // Int32Array, Preis in Cent je Zone (vom Server!)
-  zoneHeat: null,
-  zoneFrozen: null,
-  canvasVersion: -1,    // Stand des Schnappschusses, siehe resync()
-  zonesVersion: -1,
-  me: null,
+  prices: null,         // Uint32Array, Preis in Cent pro Pixel (vom Server!)
+  canvasVersion: -1,    // Stand der Schnappschüsse, siehe resync()
+  pricesVersion: -1,
   color: 1,
+  tool: "brush",        // "brush" | "picker" | "info"
   selected: null,       // {x, y}
   hover: null,          // {x, y}
   showHeat: false,
-  event: null,
-  clockOffset: 0,       // Serverzeit minus lokale Zeit (ms)
 };
 
 const board = $("board");
 const ctx = board.getContext("2d");
 const off = document.createElement("canvas");
-let offCtx, img;
+const heatOff = document.createElement("canvas");
+let offCtx, img, heatCtx, heatImg;
 // Ansicht: 1 Leinwand-Pixel = `scale` Bildschirmpixel; (ox, oy) = Bildschirmposition der Leinwand-Ecke oben links.
-const view = { scale: 2, ox: 0, oy: 0 };
-let needsDraw = true;
-let imgDirty = true;
-let viewTouched = false; // hat der Nutzer schon gezoomt/verschoben?
+const view = { scale: 1, ox: 0, oy: 0, minScale: 1 };
+const MAX_SCALE = 60;
+let needsDraw = true, imgDirty = true, heatDirty = true;
 
-// ---------------------------------------------------------------- Hilfen
-
-function fmtCents(c) {
-  // Nur Formatierung fürs Auge, keine Preisberechnung.
-  if (c < 100) return `${c} ct`;
-  return `${(c / 100).toFixed(2).replace(".", ",")} €`;
-}
+const idx = (x, y) => y * state.size + x;
 
 function hexToRgb(h) {
   const n = parseInt(h.slice(1), 16);
   return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
 }
 
-let toastTimer = null;
-function toast(msg, ms = 2500) {
-  const t = $("toast");
-  t.textContent = msg;
-  t.hidden = false;
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => (t.hidden = true), ms);
-}
-
-async function api(path, opts = {}) {
-  const res = await fetch(path, {
-    credentials: "same-origin",
-    headers: opts.body ? { "Content-Type": "application/json" } : {},
-    ...opts,
-  });
-  let data = null;
-  try { data = await res.json(); } catch (_) { /* leere Antwort */ }
-  if (!res.ok) {
-    const err = new Error((data && data.message) || res.statusText);
-    err.status = res.status;
-    err.data = data;
-    throw err;
-  }
-  return data;
-}
-
-const zoneIndex = (x, y) =>
-  Math.floor(y / state.zoneSize) * state.zonesPerSide + Math.floor(x / state.zoneSize);
-
-// ---------------------------------------------------------------- Pixel & Zonen
+// ---------------------------------------------------------------- Pixel & Preise
 
 function setPixel(x, y, c) {
-  const i = y * state.size + x;
+  const i = idx(x, y);
   state.pixels[i] = c;
   const rgb = state.rgb[c] || [255, 0, 255];
   const d = img.data, j = i * 4;
@@ -99,36 +57,50 @@ function setPixel(x, y, c) {
 }
 
 function redrawAllPixels() {
-  const d = img.data;
-  for (let i = 0; i < state.pixels.length; i++) {
-    const rgb = state.rgb[state.pixels[i]] || [255, 0, 255];
-    const j = i * 4;
-    d[j] = rgb[0]; d[j + 1] = rgb[1]; d[j + 2] = rgb[2]; d[j + 3] = 255;
-  }
-  imgDirty = true;
+  for (let y = 0; y < state.size; y++)
+    for (let x = 0; x < state.size; x++) setPixel(x, y, state.pixels[idx(x, y)]);
 }
 
-function setZone(zx, zy, price, heat) {
-  const i = zy * state.zonesPerSide + zx;
-  state.zonePrice[i] = price;
-  state.zoneHeat[i] = heat;
-  needsDraw = true;
+/*
+ * Preiskarte: Die Farbe zeigt, wie viel teurer ein Pixel als das billigste ist.
+ * Das ist reine Darstellung – der Preis selbst kommt vom Server.
+ * Logarithmisch, weil Preise exponentiell steigen: 2×, 4×, 8× teurer sollen
+ * gleichmäßig dunkler werden.
+ */
+let cheapest = 1;
+function setHeatPixel(i) {
+  const ratio = state.prices[i] / cheapest;
+  const a = ratio <= 1 ? 0 : Math.min(200, 40 + Math.log2(ratio) * 45);
+  const d = heatImg.data, j = i * 4;
+  d[j] = 255; d[j + 1] = 30; d[j + 2] = 0; d[j + 3] = a;
+  heatDirty = true;
+}
+
+function rebuildHeat() {
+  cheapest = Math.max(1, state.prices.reduce((m, p) => (p < m ? p : m), Infinity));
+  for (let i = 0; i < state.prices.length; i++) setHeatPixel(i);
+}
+
+function setPrice(x, y, p) {
+  const i = idx(x, y);
+  state.prices[i] = p;
+  setHeatPixel(i);
 }
 
 // ---------------------------------------------------------------- Live-Verbindung
 
-let ws = null;
-let wsBuffer = null;
-let reconnectDelay = 500;
+let ws = null, wsBuffer = null, reconnectDelay = 500;
 
 function setConn(on) {
-  $("conn").className = "conn " + (on ? "on" : "off");
+  const el = $("conn");
+  el.hidden = false;
+  el.className = "conn " + (on ? "on" : "off");
 }
 
 function connect() {
   const proto = location.protocol === "https:" ? "wss" : "ws";
   ws = new WebSocket(`${proto}://${location.host}/ws`);
-  // Nachrichten, die ankommen, während wir den Schnappschuss laden, werden
+  // Nachrichten, die ankommen, während wir die Schnappschüsse laden, werden
   // gepuffert und danach angewendet.
   wsBuffer = [];
   ws.onopen = () => resync(ws);
@@ -138,94 +110,129 @@ function connect() {
   };
   ws.onclose = () => {
     setConn(false);
-    // Exponentielles Warten: Stürzt der Server kurz ab, sollen nicht 2.000
-    // Browser im selben Moment wieder anklopfen. Mit Zufallsanteil.
+    // Exponentielles Warten mit Zufallsanteil: Stürzt der Server kurz ab,
+    // sollen nicht 2.000 Browser im selben Moment wieder anklopfen.
     const wait = reconnectDelay * (0.5 + Math.random());
     reconnectDelay = Math.min(reconnectDelay * 2, 15000);
     setTimeout(connect, wait);
   };
 }
 
+async function fetchSnapshot(url) {
+  const res = await fetch(url, { cache: "no-store" });
+  if (!res.ok) throw new Error(url);
+  return { buf: await res.arrayBuffer(), version: parseInt(res.headers.get("X-Version"), 10) };
+}
+
+async function loadPrices() {
+  const snap = await fetchSnapshot("/api/prices");
+  state.prices.set(new Uint32Array(snap.buf));
+  state.pricesVersion = snap.version;
+  rebuildHeat();
+}
+
 /*
- * Lückenloser Neuaufbau: ERST WebSocket verbinden, DANN Schnappschuss laden.
- * Der Schnappschuss nennt eine Version v. Alle WebSocket-Pakete mit Nummer ≤ v
- * sind darin schon enthalten und werden verworfen, alle neueren angewendet.
- * So geht beim (Neu-)Verbinden kein einziges Pixel verloren.
+ * Lückenloser Neuaufbau: ERST WebSocket verbinden, DANN Schnappschüsse laden.
+ * Jeder Schnappschuss nennt eine Version v. Alle WebSocket-Pakete mit
+ * Nummer ≤ v sind darin schon enthalten und werden verworfen, alle neueren
+ * angewendet. So geht beim (Neu-)Verbinden kein einziges Pixel verloren.
  */
 async function resync(sock) {
   try {
-    const [canvasRes, zones] = await Promise.all([
-      fetch("/api/canvas", { cache: "no-store" }),
-      api("/api/zones"),
-    ]);
-    if (!canvasRes.ok) throw new Error("canvas");
-    const buf = new Uint8Array(await canvasRes.arrayBuffer());
+    const [canvas] = await Promise.all([fetchSnapshot("/api/canvas"), loadPrices()]);
     if (sock !== ws) return; // in der Zwischenzeit neu verbunden
-    state.pixels.set(buf);
-    state.canvasVersion = parseInt(canvasRes.headers.get("X-Canvas-Version"), 10);
+    state.pixels.set(new Uint8Array(canvas.buf));
+    state.canvasVersion = canvas.version;
     redrawAllPixels();
-
-    state.zonePrice.set(zones.prices);
-    state.zoneHeat.set(zones.heat);
-    state.zoneFrozen.set(zones.frozen);
-    state.zonesVersion = zones.version;
-
     const pending = wsBuffer || [];
     wsBuffer = null;
     pending.forEach(handleMessage);
     setConn(true);
     reconnectDelay = 500;
-    updateInfo();
+    updateInfoLine();
   } catch (e) {
     sock.close();
   }
 }
 
+let reloadingPrices = false;
 function handleMessage(msg) {
   if (msg.type === "pixel") {
     if (msg.v <= state.canvasVersion) return;
     const d = msg.data;
     for (let i = 0; i < d.length; i += 3) setPixel(d[i], d[i + 1], d[i + 2]);
     state.canvasVersion = msg.v;
-  } else if (msg.type === "zone_price") {
-    if (msg.v <= state.zonesVersion) return;
+  } else if (msg.type === "price") {
+    if (msg.v <= state.pricesVersion) return;
     const d = msg.data;
-    for (let i = 0; i < d.length; i += 4) setZone(d[i], d[i + 1], d[i + 2], d[i + 3]);
-    state.zonesVersion = msg.v;
-    updateInfo();
-  } else if (msg.type === "freeze") {
-    // Phase 3 (Moderation)
+    for (let i = 0; i < d.length; i += 3) setPrice(d[i], d[i + 1], d[i + 2]);
+    state.pricesVersion = msg.v;
+    updateInfoLine();
+  } else if (msg.type === "prices_reset") {
+    // Admin hat die Preisparameter geändert → alle Preise neu laden.
+    if (msg.v <= state.pricesVersion || reloadingPrices) return;
+    reloadingPrices = true;
+    loadPrices().then(updateInfoLine).finally(() => (reloadingPrices = false));
   }
+}
+
+// ---------------------------------------------------------------- Ansicht (Zoom & Verschieben)
+
+function viewport() {
+  const r = board.getBoundingClientRect();
+  return { w: r.width, h: r.height, left: r.left, top: r.top };
+}
+
+/*
+ * Kleinster Zoom = die ganze Leinwand passt genau ins Fenster. Weiter raus geht
+ * nicht. Außerdem darf die Leinwand nicht aus dem Bild geschoben werden: Ist
+ * sie in einer Richtung kleiner als das Fenster, wird sie dort zentriert.
+ */
+function clampView() {
+  const { w, h } = viewport();
+  view.minScale = Math.min(w, h) / state.size;
+  view.scale = Math.min(MAX_SCALE, Math.max(view.minScale, view.scale));
+  const cw = state.size * view.scale, ch = state.size * view.scale;
+  view.ox = cw <= w ? (w - cw) / 2 : Math.min(0, Math.max(w - cw, view.ox));
+  view.oy = ch <= h ? (h - ch) / 2 : Math.min(0, Math.max(h - ch, view.oy));
+  needsDraw = true;
+}
+
+function resize() {
+  const dpr = window.devicePixelRatio || 1;
+  const { w, h } = viewport();
+  const wasFit = view.scale <= view.minScale + 1e-6;
+  board.width = Math.round(w * dpr);
+  board.height = Math.round(h * dpr);
+  if (wasFit) view.scale = 0; // bleibt "ganz eingepasst", wenn es das vorher war
+  clampView();
+}
+
+function zoomAt(clientX, clientY, newScale) {
+  // Zoomen so, dass der Punkt unter Finger/Maus an derselben Stelle bleibt.
+  const { left, top } = viewport();
+  const px = clientX - left, py = clientY - top;
+  newScale = Math.min(MAX_SCALE, Math.max(view.minScale, newScale));
+  view.ox = px - (px - view.ox) * (newScale / view.scale);
+  view.oy = py - (py - view.oy) * (newScale / view.scale);
+  view.scale = newScale;
+  clampView();
+}
+
+function screenToCanvas(clientX, clientY) {
+  const { left, top } = viewport();
+  const x = Math.floor((clientX - left - view.ox) / view.scale);
+  const y = Math.floor((clientY - top - view.oy) / view.scale);
+  if (x < 0 || y < 0 || x >= state.size || y >= state.size) return null;
+  return { x, y };
 }
 
 // ---------------------------------------------------------------- Zeichnen
 
-function resize() {
-  const dpr = window.devicePixelRatio || 1;
-  const r = board.getBoundingClientRect();
-  board.width = Math.round(r.width * dpr);
-  board.height = Math.round(r.height * dpr);
-  needsDraw = true;
-}
-
-function fitView() {
-  const r = board.getBoundingClientRect();
-  view.scale = Math.max(0.5, Math.min(r.width, r.height) / state.size * 0.95);
-  view.ox = (r.width - state.size * view.scale) / 2;
-  view.oy = (r.height - state.size * view.scale) / 2;
-  needsDraw = true;
-}
-
 function frame() {
-  if (imgDirty) {
-    offCtx.putImageData(img, 0, 0);
-    imgDirty = false;
-    needsDraw = true;
-  }
-  if (needsDraw) {
-    draw();
-    needsDraw = false;
-  }
+  if (imgDirty) { offCtx.putImageData(img, 0, 0); imgDirty = false; needsDraw = true; }
+  if (heatDirty && state.showHeat) { heatCtx.putImageData(heatImg, 0, 0); heatDirty = false; needsDraw = true; }
+  if (needsDraw) { draw(); needsDraw = false; }
   requestAnimationFrame(frame);
 }
 
@@ -235,103 +242,191 @@ function draw() {
   ctx.fillStyle = "#15151a";
   ctx.fillRect(0, 0, board.width, board.height);
 
-  // Leinwand vergrößert zeichnen. imageSmoothingEnabled=false: harte
-  // Pixelkanten statt Matsch beim Vergrößern.
+  // imageSmoothingEnabled=false: harte Pixelkanten statt Matsch beim Vergrößern.
   const s = view.scale * dpr;
   ctx.setTransform(s, 0, 0, s, view.ox * dpr, view.oy * dpr);
   ctx.imageSmoothingEnabled = false;
   ctx.drawImage(off, 0, 0);
+  if (state.showHeat) ctx.drawImage(heatOff, 0, 0);
 
-  const zs = state.zoneSize, nz = state.zonesPerSide;
-  if (state.showHeat) {
-    for (let zy = 0; zy < nz; zy++) {
-      for (let zx = 0; zx < nz; zx++) {
-        const i = zy * nz + zx;
-        const h = state.zoneHeat[i];
-        if (state.zoneFrozen[i]) {
-          ctx.fillStyle = "rgba(128,128,128,0.7)";
-          ctx.fillRect(zx * zs, zy * zs, zs, zs);
-        } else if (h > 0) {
-          ctx.fillStyle = `rgba(255,40,0,${Math.min(0.65, 0.08 + h * 0.05)})`;
-          ctx.fillRect(zx * zs, zy * zs, zs, zs);
-        }
-      }
-    }
-    ctx.strokeStyle = "rgba(0,0,0,0.25)";
+  // Pixelraster ab starkem Zoom, damit man einzelne Pixel treffen kann.
+  if (view.scale >= 12) {
+    const { w, h } = viewport();
+    const x0 = Math.max(0, Math.floor(-view.ox / view.scale)), x1 = Math.min(state.size, Math.ceil((w - view.ox) / view.scale));
+    const y0 = Math.max(0, Math.floor(-view.oy / view.scale)), y1 = Math.min(state.size, Math.ceil((h - view.oy) / view.scale));
+    ctx.strokeStyle = "rgba(0,0,0,0.08)";
     ctx.lineWidth = 1 / view.scale;
     ctx.beginPath();
-    for (let k = 0; k <= nz; k++) {
-      ctx.moveTo(k * zs, 0); ctx.lineTo(k * zs, state.size);
-      ctx.moveTo(0, k * zs); ctx.lineTo(state.size, k * zs);
-    }
+    for (let x = x0; x <= x1; x++) { ctx.moveTo(x, y0); ctx.lineTo(x, y1); }
+    for (let y = y0; y <= y1; y++) { ctx.moveTo(x0, y); ctx.lineTo(x1, y); }
     ctx.stroke();
   }
 
-  // Zone unter dem Mauszeiger / ausgewählte Zone umranden.
-  const focus = state.hover || state.selected;
-  if (focus) {
-    const zx = Math.floor(focus.x / zs), zy = Math.floor(focus.y / zs);
-    ctx.strokeStyle = "rgba(255,255,255,0.6)";
-    ctx.lineWidth = 2 / view.scale;
-    ctx.strokeRect(zx * zs, zy * zs, zs, zs);
-  }
+  const outline = (p, color, width) => {
+    ctx.lineWidth = Math.max(width / view.scale, 0.08);
+    ctx.strokeStyle = color;
+    ctx.strokeRect(p.x, p.y, 1, 1);
+  };
+  const h = state.hover, sel = state.selected;
+  if (h && !(sel && sel.x === h.x && sel.y === h.y)) outline(h, "rgba(255,255,255,0.8)", 1.5);
   if (state.selected) {
-    const { x, y } = state.selected;
-    ctx.lineWidth = Math.max(1 / view.scale, 0.12);
-    ctx.strokeStyle = "#000";
-    ctx.strokeRect(x - 0.1, y - 0.1, 1.2, 1.2);
-    ctx.strokeStyle = "#fff";
-    ctx.strokeRect(x + 0.05, y + 0.05, 0.9, 0.9);
+    outline({ x: state.selected.x - 0.1, y: state.selected.y - 0.1 }, "#000", 2);
+    outline(state.selected, "#fff", 1.5);
   }
+}
 
-  // Preise als Text in die Zonen schreiben, wenn sie groß genug sind.
-  if (state.showHeat && zs * view.scale >= 44) {
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.font = "600 12px system-ui, sans-serif";
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    for (let zy = 0; zy < nz; zy++) {
-      for (let zx = 0; zx < nz; zx++) {
-        const cx = view.ox + (zx + 0.5) * zs * view.scale;
-        const cy = view.oy + (zy + 0.5) * zs * view.scale;
-        if (cx < -50 || cy < -50 || cx > board.width / dpr + 50 || cy > board.height / dpr + 50) continue;
-        const label = fmtCents(state.zonePrice[zy * nz + zx]);
-        ctx.lineWidth = 3;
-        ctx.strokeStyle = "rgba(0,0,0,0.7)";
-        ctx.strokeText(label, cx, cy);
-        ctx.fillStyle = "#fff";
-        ctx.fillText(label, cx, cy);
-      }
-    }
+// ---------------------------------------------------------------- Werkzeuge
+
+function setTool(tool) {
+  state.tool = tool;
+  document.querySelectorAll(".tool").forEach((b) => {
+    const on = b.dataset.tool === tool;
+    b.classList.toggle("active", on);
+    b.setAttribute("aria-checked", on);
+  });
+  board.dataset.tool = tool; // steuert den Mauszeiger per CSS
+  updateInfoLine();
+}
+
+function setColor(i) {
+  state.color = i;
+  document.querySelectorAll(".swatch").forEach((s) => s.classList.toggle("active", +s.dataset.color === i));
+  const active = document.querySelector(".swatch.active");
+  if (active) active.scrollIntoView({ block: "nearest", inline: "nearest" });
+}
+
+function onTap(e) {
+  const p = screenToCanvas(e.clientX, e.clientY);
+  if (!p) return;
+  if (state.tool === "picker") {
+    const c = state.pixels[idx(p.x, p.y)];
+    if (c === 0) { toast(t("canvas.picked_empty")); return; }
+    setColor(c);
+    setTool("brush"); // nach dem Aufnehmen will man fast immer malen
+    toast(t("canvas.picked"), 1200);
+    return;
   }
+  if (state.tool === "info") {
+    showPixelInfo(p.x, p.y);
+    return;
+  }
+  // Pinsel. Maus: Klick malt direkt (der Preis stand schon unten links).
+  // Finger: Tippen wählt nur aus, gemalt wird mit dem Knopf – sonst würde man
+  // beim Verschieben aus Versehen Geld ausgeben.
+  state.selected = p;
+  needsDraw = true;
+  updateInfoLine();
+  if (e.pointerType === "mouse") paint();
+}
+
+async function showPixelInfo(x, y) {
+  try {
+    const info = await api(`/api/pixel?x=${x}&y=${y}`);
+    $("pixel-title").textContent = t("info.title", { x, y });
+    const rows = [
+      [t("info.price"), fmtMoney(info.price_cents)],
+      [t("info.overpaints"), fmtNumber(info.overpaint_count)],
+      [t("info.last_painted"), info.painted_at ? fmtDateTime(info.painted_at) : t("info.never")],
+      [t("info.user"), info.user || t("info.none")],
+    ];
+    const dl = $("pixel-details");
+    dl.innerHTML = "";
+    for (const [k, v] of rows) {
+      const dt = document.createElement("dt"); dt.textContent = k;
+      const dd = document.createElement("dd"); dd.textContent = v;
+      dl.append(dt, dd);
+    }
+    // Gilde als Link zur Gildenseite (textContent statt innerHTML: Gildennamen
+    // stammen von Nutzern und dürfen nie als HTML interpretiert werden).
+    const dt = document.createElement("dt"); dt.textContent = t("info.guild");
+    const dd = document.createElement("dd");
+    if (info.guild) {
+      const a = document.createElement("a");
+      a.href = `/c/${encodeURIComponent(info.guild.slug)}`;
+      a.className = "guild-chip";
+      a.style.setProperty("--guild", info.guild.color);
+      a.textContent = info.guild.name;
+      dd.appendChild(a);
+    } else {
+      dd.textContent = t("info.none");
+    }
+    dl.append(dt, dd);
+    $("pixel-dialog").showModal();
+  } catch (err) {
+    toast(errorText(err));
+  }
+}
+
+// ---------------------------------------------------------------- Malen
+
+let painting = false;
+
+async function paint() {
+  if (!state.selected || painting) return;
+  if (!Account.me) { toast(t("account.login_required")); $("login-handle")?.focus(); return; }
+  const { x, y } = state.selected;
+  const shownPrice = state.prices[idx(x, y)];
+  const color = state.color;
+  painting = true;
+  updateInfoLine();
+  try {
+    const r = await api("/api/paint", {
+      method: "POST",
+      body: JSON.stringify({ x, y, color_index: color, max_price_cents: shownPrice }),
+    });
+    // Sofort lokal anzeigen; die Bestätigung per WebSocket folgt ohnehin.
+    setPixel(x, y, color);
+    setPrice(x, y, r.new_price_cents);
+    Account.me.balance_cents = r.balance_cents;
+    renderHeader();
+  } catch (err) {
+    const d = err.data || {};
+    if (d.error === "price_changed") {
+      setPrice(x, y, d.current_price_cents);
+      toast(t("canvas.price_rose", { price: fmtMoney(d.current_price_cents) }));
+    } else {
+      if (err.status === 401) await loadMe();
+      toast(errorText(err));
+    }
+  } finally {
+    painting = false;
+    updateInfoLine();
+  }
+}
+
+function updateHoverStatus() {
+  // Unten links: Koordinate + Preis des Pixels unter der Maus (bzw. des
+  // ausgewählten Pixels auf Touch-Geräten, die kein "Überfahren" kennen).
+  const p = state.hover || state.selected;
+  const el = $("hover-status");
+  if (!p || !state.prices) { el.hidden = true; return; }
+  const i = idx(p.x, p.y);
+  el.hidden = false;
+  el.textContent = `(${p.x}, ${p.y}) · ${fmtMoney(state.prices[i])}` + (state.pixels[i] === 0 ? ` · ${t("canvas.empty")}` : "");
+}
+
+function updateInfoLine() {
+  updateHoverStatus();
+  const btn = $("paint-btn");
+  const brush = state.tool === "brush";
+  btn.hidden = !brush;
+  $("info-line").textContent = brush && !state.selected ? t("canvas.tap_hint") : "";
+  if (!brush) return;
+  if (!state.selected || !state.prices) {
+    btn.disabled = true;
+    btn.textContent = t("canvas.paint");
+    return;
+  }
+  btn.textContent = t("canvas.paint_price", { price: fmtMoney(state.prices[idx(state.selected.x, state.selected.y)]) });
+  btn.disabled = painting || EventClock.event?.phase !== "running";
 }
 
 // ---------------------------------------------------------------- Eingabe (Maus, Touch, Stift)
 
-function screenToCanvas(clientX, clientY) {
-  const r = board.getBoundingClientRect();
-  const x = Math.floor((clientX - r.left - view.ox) / view.scale);
-  const y = Math.floor((clientY - r.top - view.oy) / view.scale);
-  if (x < 0 || y < 0 || x >= state.size || y >= state.size) return null;
-  return { x, y };
-}
-
-function zoomAt(clientX, clientY, newScale) {
-  // Zoomen so, dass der Punkt unter Finger/Maus an derselben Stelle bleibt.
-  const r = board.getBoundingClientRect();
-  const px = clientX - r.left, py = clientY - r.top;
-  newScale = Math.min(60, Math.max(0.5, newScale));
-  view.ox = px - (px - view.ox) * (newScale / view.scale);
-  view.oy = py - (py - view.oy) * (newScale / view.scale);
-  view.scale = newScale;
-  viewTouched = true;
-  needsDraw = true;
-}
-
 /*
  * Pointer Events vereinheitlichen Maus, Finger und Stift. Wir merken uns alle
  * aktiven Zeiger:
- *   1 Zeiger, kaum bewegt, losgelassen → Tippen (Pixel wählen / malen)
+ *   1 Zeiger, kaum bewegt, losgelassen → Tippen (je nach Werkzeug)
  *   1 Zeiger, bewegt                   → Verschieben
  *   2 Zeiger                           → Pinch-Zoom + Verschieben
  */
@@ -339,8 +434,8 @@ const pointers = new Map();
 let gesture = null;
 const TAP_SLOP = 6; // px Bewegung, ab der es kein Tippen mehr ist
 
-function startPan(p) {
-  gesture = { type: "tap", sx: p.x, sy: p.y, ox: view.ox, oy: view.oy };
+function startPan(p, type = "tap") {
+  gesture = { type, sx: p.x, sy: p.y, ox: view.ox, oy: view.oy };
 }
 
 function startPinch() {
@@ -353,6 +448,14 @@ function startPinch() {
   };
 }
 
+function setHover(p) {
+  const same = p && state.hover && p.x === state.hover.x && p.y === state.hover.y;
+  if (same || (!p && !state.hover)) return;
+  state.hover = p;
+  needsDraw = true;
+  updateHoverStatus();
+}
+
 function setupInput() {
   board.addEventListener("pointerdown", (e) => {
     board.setPointerCapture(e.pointerId);
@@ -362,12 +465,7 @@ function setupInput() {
   });
 
   board.addEventListener("pointermove", (e) => {
-    if (e.pointerType === "mouse" && pointers.size === 0) {
-      const p = screenToCanvas(e.clientX, e.clientY);
-      const changed = (p && state.hover) ? (p.x !== state.hover.x || p.y !== state.hover.y) : p !== state.hover;
-      if (changed) { state.hover = p; needsDraw = true; updateInfo(); }
-      return;
-    }
+    if (e.pointerType === "mouse") setHover(screenToCanvas(e.clientX, e.clientY));
     if (!pointers.has(e.pointerId)) return;
     pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
     if (!gesture) return;
@@ -376,25 +474,23 @@ function setupInput() {
       const [a, b] = [...pointers.values()];
       const dist = Math.hypot(a.x - b.x, a.y - b.y) || 1;
       const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
-      const r = board.getBoundingClientRect();
-      const newScale = Math.min(60, Math.max(0.5, gesture.scale * dist / gesture.dist));
+      const { left, top } = viewport();
+      const newScale = Math.min(MAX_SCALE, Math.max(view.minScale, gesture.scale * dist / gesture.dist));
       // Leinwandpunkt, der am Anfang unter der Fingermitte lag …
-      const cx = (gesture.mx - r.left - gesture.ox) / gesture.scale;
-      const cy = (gesture.my - r.top - gesture.oy) / gesture.scale;
+      const cx = (gesture.mx - left - gesture.ox) / gesture.scale;
+      const cy = (gesture.my - top - gesture.oy) / gesture.scale;
       // … soll jetzt unter der aktuellen Fingermitte liegen.
       view.scale = newScale;
-      view.ox = mx - r.left - cx * newScale;
-      view.oy = my - r.top - cy * newScale;
-      viewTouched = true;
-      needsDraw = true;
+      view.ox = mx - left - cx * newScale;
+      view.oy = my - top - cy * newScale;
+      clampView();
     } else if (gesture.type === "tap" || gesture.type === "pan") {
       const dx = e.clientX - gesture.sx, dy = e.clientY - gesture.sy;
       if (gesture.type === "tap" && Math.hypot(dx, dy) > TAP_SLOP) gesture.type = "pan";
       if (gesture.type === "pan") {
         view.ox = gesture.ox + dx;
         view.oy = gesture.oy + dy;
-        viewTouched = true;
-        needsDraw = true;
+        clampView();
       }
     }
   });
@@ -406,18 +502,14 @@ function setupInput() {
     if (wasTap && e.type === "pointerup") onTap(e);
     if (pointers.size === 1) {
       // Nach dem Pinch mit dem verbleibenden Finger weiterschieben (kein Tippen!).
-      const [p] = [...pointers.values()];
-      startPan(p);
-      gesture.type = "pan";
+      startPan([...pointers.values()][0], "pan");
     } else if (pointers.size === 0) {
       gesture = null;
     }
   };
   board.addEventListener("pointerup", end);
   board.addEventListener("pointercancel", end);
-  board.addEventListener("pointerleave", (e) => {
-    if (e.pointerType === "mouse" && state.hover) { state.hover = null; needsDraw = true; updateInfo(); }
-  });
+  board.addEventListener("pointerleave", (e) => { if (e.pointerType === "mouse") setHover(null); });
 
   board.addEventListener("wheel", (e) => {
     e.preventDefault();
@@ -426,96 +518,18 @@ function setupInput() {
 
   // ResizeObserver statt window.resize: Die Fläche ändert sich auch, wenn z. B.
   // die Kopfzeile nach dem Login umbricht, ohne dass sich das Fenster ändert.
-  // Solange der Nutzer die Ansicht nicht selbst bewegt hat, neu einpassen.
-  new ResizeObserver(() => {
-    resize();
-    if (!viewTouched) fitView();
-  }).observe(board);
+  new ResizeObserver(resize).observe(board);
+
   window.addEventListener("keydown", (e) => {
-    if ((e.key === " " || e.key === "Enter") && state.selected && document.activeElement === document.body) {
-      e.preventDefault();
-      paint();
-    }
+    if (e.target.closest("input, textarea, dialog")) return;
+    if ((e.key === " " || e.key === "Enter") && state.selected && state.tool === "brush") { e.preventDefault(); paint(); }
+    if (e.key === "b") setTool("brush");
+    if (e.key === "i") setTool("info");
+    if (e.key === "p") setTool("picker");
   });
 }
 
-function onTap(e) {
-  const p = screenToCanvas(e.clientX, e.clientY);
-  if (!p) return;
-  state.selected = p;
-  needsDraw = true;
-  updateInfo();
-  // Maus: Klick malt direkt (der Preis stand schon beim Drüberfahren da).
-  // Finger: Tippen wählt nur aus, gemalt wird mit dem Knopf – sonst würde man
-  // beim Verschieben aus Versehen Geld ausgeben.
-  if (e.pointerType === "mouse") paint();
-}
-
-// ---------------------------------------------------------------- Malen
-
-let painting = false;
-
-async function paint() {
-  if (!state.selected || painting) return;
-  if (!state.me) { toast("Bitte zuerst einloggen"); $("login-handle").focus(); return; }
-  const { x, y } = state.selected;
-  const shownPrice = state.zonePrice[zoneIndex(x, y)];
-  const color = state.color;
-  painting = true;
-  try {
-    const r = await api("/api/paint", {
-      method: "POST",
-      body: JSON.stringify({ x, y, color_index: color, max_price_cents: shownPrice }),
-    });
-    // Sofort lokal anzeigen; die Bestätigung per WebSocket folgt ohnehin.
-    setPixel(x, y, color);
-    const zx = Math.floor(x / state.zoneSize), zy = Math.floor(y / state.zoneSize);
-    setZone(zx, zy, r.zone_price_cents, r.heat);
-    state.me.balance_cents = r.balance_cents;
-    renderMe();
-  } catch (err) {
-    const d = err.data || {};
-    if (d.error === "price_changed") {
-      const zx = Math.floor(x / state.zoneSize), zy = Math.floor(y / state.zoneSize);
-      state.zonePrice[zy * state.zonesPerSide + zx] = d.current_price_cents;
-      toast(`Preis ist gestiegen auf ${fmtCents(d.current_price_cents)} – nochmal malen zum Bestätigen`);
-    } else if (d.error === "insufficient_funds") {
-      toast(`Nicht genug Guthaben (${fmtCents(d.price_cents)} nötig)`);
-    } else if (err.status === 401) {
-      state.me = null; renderMe(); toast("Bitte einloggen");
-    } else {
-      toast(err.message);
-    }
-  } finally {
-    painting = false;
-    updateInfo();
-  }
-}
-
-function updateInfo() {
-  const p = state.hover || state.selected;
-  const btn = $("paint-btn");
-  if (!p || !state.zonePrice) {
-    $("info").textContent = "Tippe auf ein Pixel";
-    btn.disabled = true;
-    btn.textContent = "Malen";
-    return;
-  }
-  const zi = zoneIndex(p.x, p.y);
-  const price = state.zonePrice[zi];
-  const empty = state.pixels[p.y * state.size + p.x] === 0;
-  const frozen = state.zoneFrozen[zi];
-  $("info").textContent =
-    `(${p.x}, ${p.y}) · ${frozen ? "gesperrt" : fmtCents(price)}` +
-    (empty ? " · leer" : " · übermalen erhöht den Preis");
-  if (state.selected) {
-    const sp = state.zonePrice[zoneIndex(state.selected.x, state.selected.y)];
-    btn.textContent = `Malen · ${fmtCents(sp)}`;
-    btn.disabled = painting || state.event?.phase !== "running";
-  }
-}
-
-// ---------------------------------------------------------------- Palette
+// ---------------------------------------------------------------- Start
 
 function buildPalette() {
   const el = $("palette");
@@ -524,173 +538,48 @@ function buildPalette() {
   for (let i = 1; i < state.palette.length; i++) {
     const b = document.createElement("button");
     b.type = "button";
-    b.className = "swatch" + (i === state.color ? " active" : "");
+    b.className = "swatch";
+    b.dataset.color = i;
     b.style.background = state.palette[i];
     b.setAttribute("role", "radio");
     b.setAttribute("aria-label", state.palette[i]);
-    b.addEventListener("click", () => {
-      state.color = i;
-      el.querySelectorAll(".swatch").forEach((s) => s.classList.remove("active"));
-      b.classList.add("active");
-    });
+    b.addEventListener("click", () => setColor(i));
     el.appendChild(b);
   }
+  setColor(state.color);
 }
-
-// ---------------------------------------------------------------- Account & Aufladen
-
-async function loadMe() {
-  try {
-    state.me = await api("/api/me");
-  } catch (_) {
-    state.me = null;
-  }
-  renderMe();
-}
-
-function renderMe() {
-  const me = state.me;
-  $("login-form").hidden = !!me;
-  $("me").hidden = !me;
-  if (me) {
-    $("me-handle").textContent = me.handle;
-    $("me-balance").textContent = fmtCents(me.balance_cents);
-  }
-}
-
-function setupAccount() {
-  $("login-form").addEventListener("submit", async (e) => {
-    e.preventDefault();
-    try {
-      await api("/api/dev/login", {
-        method: "POST",
-        body: JSON.stringify({ handle: $("login-handle").value.trim() }),
-      });
-      await loadMe();
-    } catch (err) {
-      toast(err.message);
-    }
-  });
-
-  $("topup-btn").addEventListener("click", async () => {
-    await loadMe();
-    const me = state.me;
-    if (!me) return;
-    $("topup-cap").textContent =
-      `Bisher aufgeladen: ${fmtCents(me.total_topup_cents)} von höchstens ${fmtCents(me.topup_cap_cents)}.`;
-    const box = $("topup-packages");
-    box.innerHTML = "";
-    if (me.topup_packages_cents.length === 0) {
-      box.textContent = "Du hast die Obergrenze erreicht.";
-    }
-    for (const amount of me.topup_packages_cents) {
-      const b = document.createElement("button");
-      b.type = "button";
-      b.textContent = fmtCents(amount);
-      b.addEventListener("click", () => topup(amount));
-      box.appendChild(b);
-    }
-    $("topup-age").checked = false;
-    $("topup-dialog").showModal();
-  });
-}
-
-async function topup(amount) {
-  if (!$("topup-age").checked) {
-    toast("Bitte zuerst die Altersabfrage bestätigen");
-    return;
-  }
-  try {
-    const r = await api("/api/topup", {
-      method: "POST",
-      body: JSON.stringify({ amount_cents: amount, age_confirmed: true }),
-    });
-    if (r.completed) {
-      $("topup-dialog").close();
-      await loadMe();
-      toast(`${fmtCents(amount)} gutgeschrieben`);
-    } else {
-      location.href = r.checkout_url; // echter Anbieter (Phase 4)
-    }
-  } catch (err) {
-    toast(err.message);
-  }
-}
-
-// ---------------------------------------------------------------- Event-Status
-
-async function loadEvent() {
-  try {
-    const cfg = await api("/api/config");
-    state.event = cfg.event;
-    state.clockOffset = new Date(cfg.event.server_now) - Date.now();
-  } catch (_) { /* nächster Versuch in einer Minute */ }
-}
-
-function renderEvent() {
-  const ev = state.event;
-  if (!ev) return;
-  const now = Date.now() + state.clockOffset;
-  const left = (t) => {
-    let s = Math.max(0, Math.floor((new Date(t) - now) / 1000));
-    const d = Math.floor(s / 86400); s %= 86400;
-    const h = Math.floor(s / 3600); s %= 3600;
-    const m = Math.floor(s / 60); s %= 60;
-    return (d ? `${d} T ` : "") + `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
-  };
-  const text = {
-    before: `Start in ${left(ev.start)}`,
-    running: `Ende in ${left(ev.end)}`,
-    night_pause: "Nachtpause",
-    ended: "Event beendet",
-  }[ev.phase];
-  $("event-status").textContent = text;
-  // Phasenwechsel (Start/Ende) nicht verpassen.
-  if ((ev.phase === "before" && now >= new Date(ev.start)) || (ev.phase === "running" && now >= new Date(ev.end))) {
-    loadEvent().then(updateInfo);
-  }
-}
-
-// ---------------------------------------------------------------- Start
 
 async function main() {
-  const cfg = await api("/api/config");
+  const cfg = await initPage();
   state.size = cfg.canvas_size;
-  state.zoneSize = cfg.zone_size;
-  state.zonesPerSide = cfg.canvas_size / cfg.zone_size;
   state.palette = cfg.palette;
   state.rgb = cfg.palette.map(hexToRgb);
-  state.event = cfg.event;
-  state.clockOffset = new Date(cfg.event.server_now) - Date.now();
-
   state.pixels = new Uint8Array(state.size * state.size);
-  const nzz = state.zonesPerSide * state.zonesPerSide;
-  state.zonePrice = new Int32Array(nzz);
-  state.zoneHeat = new Int32Array(nzz);
-  state.zoneFrozen = new Uint8Array(nzz);
+  state.prices = new Uint32Array(state.size * state.size);
 
-  off.width = off.height = state.size;
+  off.width = off.height = heatOff.width = heatOff.height = state.size;
   offCtx = off.getContext("2d");
+  heatCtx = heatOff.getContext("2d");
   img = offCtx.createImageData(state.size, state.size);
+  heatImg = heatCtx.createImageData(state.size, state.size);
   redrawAllPixels();
 
   buildPalette();
   setupInput();
-  setupAccount();
+  document.querySelectorAll(".tool").forEach((b) => b.addEventListener("click", () => setTool(b.dataset.tool)));
   $("paint-btn").addEventListener("click", paint);
-  $("heat-toggle").addEventListener("change", (e) => { state.showHeat = e.target.checked; needsDraw = true; });
+  $("heat-toggle").addEventListener("change", (e) => { state.showHeat = e.target.checked; heatDirty = true; needsDraw = true; });
+  document.addEventListener("langchange", updateInfoLine);
+  onAccountChange(updateInfoLine);
+  setInterval(updateInfoLine, 5000); // Event-Phase (Start/Ende) im Malen-Knopf nachziehen
 
+  setTool("brush");
   resize();
-  fitView();
-  await loadMe();
   connect();
-  renderEvent();
-  setInterval(renderEvent, 1000);
-  setInterval(() => loadEvent().then(updateInfo), 60000);
   requestAnimationFrame(frame);
 }
 
 main().catch((e) => {
   console.error(e);
-  toast("Laden fehlgeschlagen – bitte Seite neu laden", 10000);
+  toast(t("canvas.load_failed"), 10000);
 });

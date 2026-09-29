@@ -1,17 +1,21 @@
-# Pixelkrieg – zentrale Konfiguration.
+# Pixel War – zentrale Konfiguration.
 #
 # Alles, was man vor oder während des Events drehen will, steht hier und nicht
-# verstreut im Code. Alle Geldbeträge sind Ganzzahlen in Cent.
-# Eine andere Datei kann per Umgebungsvariable PIXELKRIEG_CONFIG angegeben werden.
+# verstreut im Code. Alle Geldbeträge sind Ganzzahlen in Cent (Euro).
+# Eine andere Datei kann per Umgebungsvariable PIXELWAR_CONFIG angegeben werden.
 
 [server]
 # Entwicklungsmodus: aktiviert den FakeProvider (Guthaben ohne echte Zahlung)
 # und den Dev-Login (nur Name, kein Passwort). NIEMALS in Produktion.
 dev_mode = true
-db_path = "pixelkrieg.db"
-# Schlüssel zum Signieren der Login-Cookies. In Produktion über die
-# Umgebungsvariable PIXELKRIEG_SECRET setzen – die überschreibt diesen Wert.
-secret_key = "dev-only-bitte-aendern"
+db_path = "pixelwar.db"
+# Ordner für hochgeladene Dateien (Gildenbilder).
+data_dir = "data"
+# Schlüssel zum Signieren der Login-Cookies und Passwort fürs Admin-Panel
+# (Benutzername "admin"). In Produktion über die Umgebungsvariablen
+# PIXELWAR_SECRET und PIXELWAR_ADMIN_PASSWORD setzen – die haben Vorrang.
+secret_key = "dev-only-change-me"
+admin_password = "admin"
 
 [event]
 # Zeitpunkte in UTC (das "Z" am Ende heißt UTC).
@@ -26,21 +30,30 @@ timezone = "Europe/Berlin"
 
 [canvas]
 size = 400        # 400 × 400 Pixel
-zone_size = 20    # Zonen à 20 × 20 Pixel → 20 × 20 = 400 Zonen
 
 [pricing]
+# STANDARDWERTE. Während des Events werden sie im Admin-Panel (/admin) geändert;
+# die dort gesetzten Werte liegen in der Datenbank und haben Vorrang.
+#
 # preis_in_cent = round(base_cents * factor ** heat)
 base_cents = 2
 factor = 1.15
-# Eine Zone kühlt ab (heat - 1 pro Durchlauf), wenn so lange nicht gemalt wurde:
-cooldown_after_minutes = 30
-cooldown_interval_seconds = 60
+# Beim Übermalen bekommt jeder der 8 Nachbarn so viel heat dazu.
+contagion = 0.02
+# Pro so vielen Minuten ohne Bemalung verliert ein Pixel 1 heat.
+cooldown_minutes = 30
+# Wie oft der Hintergrundjob nachschaut, ob Pixel abkühlen müssen.
+cooldown_check_seconds = 60
 
 [limits]
 pixels_per_second = 5
 # Obergrenze für die SUMME aller Aufladungen pro Account (Jugendschutz).
 max_total_topup_cents = 2500
 topup_packages_cents = [300, 1000, 2500]
+
+[guilds]
+creation_cents = 500     # Gilde gründen kostet 5 €
+image_max_kb = 2048      # maximale Dateigröße für Gildenbilder
 
 [realtime]
 # Pixeländerungen werden gesammelt und alle X ms als ein Paket verschickt.

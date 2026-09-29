@@ -3,8 +3,8 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from fastapi.testclient import TestClient
 
-from pixelkrieg.config import Settings
-from pixelkrieg.main import create_app
+from pixelwar.config import Settings
+from pixelwar.main import create_app
 
 PALETTE = ("#FFFFFF", "#FF0000", "#00FF00", "#0000FF")
 
@@ -13,6 +13,7 @@ def make_settings(tmp_path, **overrides) -> Settings:
     now = datetime.now(timezone.utc)
     values = dict(
         db_path=str(tmp_path / "test.db"),
+        data_dir=str(tmp_path / "data"),
         dev_mode=True,
         secret_key="test-secret",
         event_start=now - timedelta(days=1),

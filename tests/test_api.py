@@ -2,9 +2,10 @@
 
 from datetime import datetime, timedelta, timezone
 
+import numpy as np
 from fastapi.testclient import TestClient
 
-from pixelkrieg.main import create_app
+from pixelwar.main import create_app
 
 from .conftest import login, make_settings
 
@@ -32,28 +33,53 @@ def test_login_me_topup(client):
 
 
 def test_forged_cookie_rejected(client):
-    client.cookies.set("pk_session", "1.deadbeef")
+    client.cookies.set("pw_session", "1.deadbeef")
     assert client.get("/api/me").status_code == 401
 
 
-def test_paint_flow_and_zones(client):
+def test_paint_flow_prices_and_pixel_info(client):
     login(client, "alice", topup=300)
     r = client.post("/api/paint", json={"x": 3, "y": 4, "color_index": 1, "max_price_cents": 2})
     assert r.status_code == 200, r.text
-    assert r.json() == {"price_cents": 2, "balance_cents": 298, "zone_price_cents": 2, "heat": 0}
-
-    r = client.post("/api/paint", json={"x": 3, "y": 4, "color_index": 2})
-    assert r.json()["heat"] == 1
-
-    zones = client.get("/api/zones").json()
-    assert zones["heat"][0] == 1 and zones["prices"][0] == 2
-    assert len(zones["prices"]) == 400
+    assert r.json() == {"price_cents": 2, "balance_cents": 298, "new_price_cents": 2}
+    for c in (2, 3):
+        client.post("/api/paint", json={"x": 3, "y": 4, "color_index": c})
 
     canvas = client.get("/api/canvas")
     assert canvas.headers["content-encoding"] == "gzip"
     data = canvas.content  # httpx entpackt automatisch
-    assert len(data) == 400 * 400
-    assert data[4 * 400 + 3] == 2
+    assert len(data) == 400 * 400 and data[4 * 400 + 3] == 3
+
+    prices = np.frombuffer(client.get("/api/prices").content, dtype="<u4").reshape(400, 400)
+    assert prices[4, 3] == 3  # heat 2 → 2 * 1.15² = 2.645 → 3
+    assert prices[0, 0] == 2
+
+    info = client.get("/api/pixel", params={"x": 3, "y": 4}).json()
+    assert info["user"] == "alice" and info["overpaint_count"] == 2 and info["price_cents"] == 3
+    assert client.get("/api/pixel", params={"x": 400, "y": 0}).status_code == 400
+
+
+def test_admin_params(client):
+    assert client.get("/api/admin/params").status_code == 401
+    assert client.get("/api/admin/params", auth=("admin", "falsch")).status_code == 401
+    assert client.get("/admin").status_code == 401
+    auth = ("admin", "admin")
+    assert client.get("/api/admin/params", auth=auth).json()["params"]["contagion"] == 0.02
+    new = {"base_cents": 3, "factor": 1.2, "contagion": 0.05, "cooldown_minutes": 15}
+    r = client.put("/api/admin/params", json=new, auth=auth)
+    assert r.status_code == 200 and r.json()["params"] == new
+    # Sofort wirksam, ohne Neustart
+    prices = np.frombuffer(client.get("/api/prices").content, dtype="<u4")
+    assert (prices == 3).all()
+    r = client.put("/api/admin/params", json={**new, "factor": 115}, auth=auth)
+    assert r.status_code == 400 and r.json()["error"] == "bad_params"
+
+
+def test_websocket_prices_reset_after_param_change(client):
+    with client.websocket_connect("/ws") as ws:
+        client.put("/api/admin/params", auth=("admin", "admin"),
+                   json={"base_cents": 4, "factor": 1.15, "contagion": 0.02, "cooldown_minutes": 30})
+        assert ws.receive_json()["type"] == "prices_reset"
 
 
 def test_paint_requires_login_and_funds(client):
@@ -101,7 +127,7 @@ def test_fake_webhook_signature_and_idempotency(client):
 
 
 def test_no_fake_provider_without_dev_mode(tmp_path):
-    app = create_app(make_settings(tmp_path, dev_mode=False))
+    app = create_app(make_settings(tmp_path, dev_mode=False, admin_password="geheim"))
     with TestClient(app) as c:
         assert c.post("/api/dev/login", json={"handle": "x"}).status_code == 404
         assert c.post("/api/webhooks/fake", content=b"{}").status_code == 404
@@ -110,7 +136,7 @@ def test_no_fake_provider_without_dev_mode(tmp_path):
 def test_websocket_receives_batched_pixels(client):
     login(client, "alice", topup=300)
     with client.websocket_connect("/ws") as ws:
-        v0 = int(client.get("/api/canvas").headers["x-canvas-version"])
+        v0 = int(client.get("/api/canvas").headers["x-version"])
         for x in range(3):
             client.post("/api/paint", json={"x": x, "y": 7, "color_index": 3})
         received = {}

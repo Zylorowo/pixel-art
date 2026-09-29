@@ -1,5 +1,7 @@
 fastapi>=0.110
 uvicorn[standard]>=0.29
 numpy>=1.26
+# Gildenbilder prüfen und verkleinern
+pillow>=10
 # Zeitzonendaten für die Nachtpause – manche schlanken Linux-Images haben keine.
 tzdata

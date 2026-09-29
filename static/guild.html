@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Pixel War – Guilds</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="page">
+  <header id="topbar"></header>
+
+  <main class="content">
+    <p><a href="/" data-i18n="guild.back"></a></p>
+
+    <!-- Liste aller Gilden + Gründen (Pfad /guilds) -->
+    <section id="list-view" hidden>
+      <h1 data-i18n="guild.list_title"></h1>
+      <div id="guild-list" class="guild-list"></div>
+
+      <h2 data-i18n="guild.create_title"></h2>
+      <p id="create-login" class="muted" data-i18n="guild.create_login" hidden></p>
+      <p id="create-in-guild" class="muted" hidden></p>
+      <form id="create-form" class="card" hidden>
+        <label><span data-i18n="guild.name"></span>
+          <input id="c-name" maxlength="32" required></label>
+        <label><span data-i18n="guild.slug"></span>
+          <span class="slug-input"><span class="muted" id="c-slug-prefix"></span><input id="c-slug" maxlength="24" required pattern="[a-z0-9][a-z0-9\-]{1,22}[a-z0-9]"></span></label>
+        <label><span data-i18n="guild.description"></span>
+          <textarea id="c-desc" maxlength="500" rows="3"></textarea></label>
+        <fieldset>
+          <legend data-i18n="guild.color"></legend>
+          <div class="hsv" id="c-color"></div>
+          <p class="muted small" data-i18n="guild.color_note"></p>
+        </fieldset>
+        <p class="muted" id="c-cost"></p>
+        <button type="submit" id="c-submit"></button>
+      </form>
+    </section>
+
+    <!-- Einzelne Gilde (Pfad /c/<slug>) -->
+    <section id="guild-view" hidden>
+      <div class="guild-head">
+        <img id="g-image" alt="" hidden>
+        <div id="g-image-placeholder" class="guild-avatar"></div>
+        <div>
+          <h1 id="g-name"></h1>
+          <p class="muted" id="g-owner"></p>
+        </div>
+      </div>
+      <p id="g-desc" class="guild-desc"></p>
+
+      <div class="stats">
+        <div><b id="g-members"></b><span data-i18n="guild.members"></span></div>
+        <div><b id="g-followers"></b><span data-i18n="guild.followers"></span></div>
+        <div><b id="g-held"></b><span data-i18n="guild.held"></span></div>
+      </div>
+
+      <div class="card">
+        <p id="g-login-hint" class="muted" data-i18n="guild.login_to_join" hidden></p>
+        <div class="row left">
+          <button id="g-join" type="button" class="big" data-i18n="guild.join" hidden></button>
+          <span id="g-joined" class="ok" data-i18n="guild.joined" hidden></span>
+          <button id="g-follow" type="button" class="ghost" hidden></button>
+        </div>
+        <p id="g-join-warning" class="muted small" data-i18n="guild.join_warning" hidden></p>
+        <p id="g-in-other" class="warn" data-i18n="guild.in_other" hidden></p>
+      </div>
+
+      <div class="card">
+        <label><span data-i18n="guild.share"></span>
+          <span class="row left"><input id="g-link" readonly><button id="g-copy" type="button" class="ghost" data-i18n="guild.copy"></button></span></label>
+      </div>
+
+      <form id="edit-form" class="card" hidden>
+        <h2 data-i18n="guild.edit_title"></h2>
+        <label><span data-i18n="guild.description"></span>
+          <textarea id="e-desc" maxlength="500" rows="3"></textarea></label>
+        <fieldset>
+          <legend data-i18n="guild.color"></legend>
+          <div class="hsv" id="e-color"></div>
+        </fieldset>
+        <label><span data-i18n="guild.image"></span>
+          <input type="file" id="e-image" accept="image/png,image/jpeg,image/gif,image/webp"></label>
+        <button type="submit" data-i18n="guild.save"></button>
+      </form>
+    </section>
+
+    <p id="not-found" class="warn" data-i18n="guild.not_found" hidden></p>
+  </main>
+
+  <script src="/static/common.js"></script>
+  <script src="/static/guild.js"></script>
+</body>
+</html>

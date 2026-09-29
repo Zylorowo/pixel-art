@@ -18,12 +18,16 @@ from datetime import datetime, timezone
 from typing import Iterator
 
 SCHEMA = """
-CREATE TABLE IF NOT EXISTS clans (
+CREATE TABLE IF NOT EXISTS guilds (
     id            INTEGER PRIMARY KEY,
     slug          TEXT NOT NULL UNIQUE,
     name          TEXT NOT NULL,
+    description   TEXT NOT NULL DEFAULT '',
     color_hex     TEXT NOT NULL,
-    owner_user_id INTEGER,
+    -- 0 = kein Bild. Wird bei jedem Hochladen erhöht, damit Browser nicht das
+    -- alte Bild aus dem Cache zeigen (?v=<image_version> an der Bild-URL).
+    image_version INTEGER NOT NULL DEFAULT 0,
+    owner_user_id INTEGER NOT NULL,
     created_at    TEXT NOT NULL
 );
 
@@ -31,7 +35,7 @@ CREATE TABLE IF NOT EXISTS users (
     id            INTEGER PRIMARY KEY,
     handle        TEXT NOT NULL UNIQUE,
     email         TEXT UNIQUE,
-    clan_id       INTEGER REFERENCES clans(id),
+    guild_id      INTEGER REFERENCES guilds(id),
     -- CHECK als letztes Sicherheitsnetz: Selbst wenn der Code einen Fehler hat,
     -- lehnt die Datenbank ein negatives Guthaben ab.
     balance_cents INTEGER NOT NULL DEFAULT 0 CHECK (balance_cents >= 0),
@@ -40,24 +44,38 @@ CREATE TABLE IF NOT EXISTS users (
     created_at    TEXT NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS pixels (
-    x             INTEGER NOT NULL,
-    y             INTEGER NOT NULL,
-    color_index   INTEGER NOT NULL,
-    owner_user_id INTEGER,
-    clan_id       INTEGER,
-    updated_at    TEXT NOT NULL,
-    PRIMARY KEY (x, y)
+-- Folgen ist unabhängig von der Mitgliedschaft: Man kann vielen Gilden folgen,
+-- aber nur in einer Mitglied sein.
+CREATE TABLE IF NOT EXISTS guild_followers (
+    guild_id      INTEGER NOT NULL REFERENCES guilds(id),
+    user_id       INTEGER NOT NULL REFERENCES users(id),
+    created_at    TEXT NOT NULL,
+    PRIMARY KEY (guild_id, user_id)
 );
 
-CREATE TABLE IF NOT EXISTS zones (
-    zx            INTEGER NOT NULL,
-    zy            INTEGER NOT NULL,
-    heat          INTEGER NOT NULL DEFAULT 0,
-    last_paint_at TEXT,
-    -- Schon jetzt angelegt, damit Phase 3 (Moderation) keine Migration braucht.
-    frozen        SMALLINT NOT NULL DEFAULT 0,
-    PRIMARY KEY (zx, zy)
+-- Eine Zeile gibt es nur für Pixel, die schon bemalt wurden ODER durch
+-- Ansteckung heat bekommen haben (dann color_index = 0, also noch leer).
+CREATE TABLE IF NOT EXISTS pixels (
+    x               INTEGER NOT NULL,
+    y               INTEGER NOT NULL,
+    color_index     INTEGER NOT NULL DEFAULT 0,
+    owner_user_id   INTEGER,
+    guild_id        INTEGER,
+    -- heat ist eine Kommazahl (Ansteckung +0.02). Das ist KEIN Geld – der
+    -- Preis daraus wird sofort zu ganzen Cent gerundet.
+    heat            REAL NOT NULL DEFAULT 0,
+    overpaint_count INTEGER NOT NULL DEFAULT 0,
+    updated_at      TEXT,              -- letzte Bemalung (NULL = nie bemalt)
+    cooled_at       TEXT NOT NULL,     -- Bezugszeitpunkt für die nächste Abkühlung
+    PRIMARY KEY (x, y)
+);
+CREATE INDEX IF NOT EXISTS pixels_cooling ON pixels (cooled_at);
+
+-- Im Admin-Panel geänderte Preisparameter. Fehlt ein Schlüssel, gilt der
+-- Standardwert aus config.toml.
+CREATE TABLE IF NOT EXISTS game_params (
+    key           TEXT PRIMARY KEY,
+    value         TEXT NOT NULL
 );
 
 -- Vollständiges Protokoll, wird nie gelöscht (Zeitraffer-Video am Ende).
@@ -67,7 +85,7 @@ CREATE TABLE IF NOT EXISTS paint_log (
     y             INTEGER NOT NULL,
     color_index   INTEGER NOT NULL,
     user_id       INTEGER NOT NULL,
-    clan_id       INTEGER,
+    guild_id      INTEGER,
     price_cents   INTEGER NOT NULL,
     created_at    TEXT NOT NULL
 );
@@ -89,8 +107,8 @@ CREATE INDEX IF NOT EXISTS topups_user ON topups (user_id);
 CREATE TABLE IF NOT EXISTS mod_events (
     id            INTEGER PRIMARY KEY,
     kind          TEXT NOT NULL,
-    zx            INTEGER,
-    zy            INTEGER,
+    x             INTEGER,
+    y             INTEGER,
     detail        TEXT,
     resolved      SMALLINT NOT NULL DEFAULT 0,
     created_at    TEXT NOT NULL
@@ -127,14 +145,8 @@ def connect(path: str) -> sqlite3.Connection:
     return conn
 
 
-def init_schema(conn: sqlite3.Connection, zones_per_side: int) -> None:
+def init_schema(conn: sqlite3.Connection) -> None:
     conn.executescript(SCHEMA)
-    # Alle Zonen einmal anlegen, damit später nur noch UPDATEs nötig sind.
-    with transaction(conn):
-        conn.executemany(
-            "INSERT INTO zones (zx, zy, heat) VALUES (?, ?, 0) ON CONFLICT (zx, zy) DO NOTHING",
-            [(zx, zy) for zy in range(zones_per_side) for zx in range(zones_per_side)],
-        )
 
 
 @contextmanager

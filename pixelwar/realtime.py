@@ -50,23 +50,32 @@ class Hub:
         self.client_queue_size = client_queue_size
         self.clients: set[Client] = set()
         self.version = 0
-        # Dicts statt Listen: Mehrere Änderungen am selben Pixel/derselben Zone
-        # im selben 100-ms-Fenster überschreiben sich, nur der letzte Stand zählt.
+        # Dicts statt Listen: Mehrere Änderungen am selben Pixel im selben
+        # 100-ms-Fenster überschreiben sich, nur der letzte Stand zählt.
         self._pixels: dict[tuple[int, int], int] = {}
-        self._zones: dict[tuple[int, int], tuple[int, int]] = {}
+        self._prices: dict[tuple[int, int], int] = {}
+        self._prices_reset = False
 
     # -- Aufrufe aus dem Spielkern ------------------------------------------------
 
     def queue_pixel(self, x: int, y: int, color_index: int) -> None:
         self._pixels[(x, y)] = color_index
 
-    def queue_zone(self, zx: int, zy: int, price_cents: int, heat: int) -> None:
-        self._zones[(zx, zy)] = (price_cents, heat)
+    def queue_price(self, x: int, y: int, price_cents: int) -> None:
+        self._prices[(x, y)] = price_cents
+
+    def queue_prices_reset(self) -> None:
+        """Alle Preise haben sich geändert (neue Parameter im Admin-Panel).
+
+        Statt 160.000 Einzelpreise zu schicken, sagen wir den Browsern nur
+        "bitte /api/prices neu laden".
+        """
+        self._prices_reset = True
 
     # -- Verteilen ----------------------------------------------------------------
 
     def flush(self) -> None:
-        if not self._pixels and not self._zones:
+        if not self._pixels and not self._prices and not self._prices_reset:
             return
         self.version += 1
         messages = []
@@ -75,11 +84,15 @@ class Hub:
             # eine Liste von Objekten mit Feldnamen.
             data = [v for (x, y), c in self._pixels.items() for v in (x, y, c)]
             messages.append({"type": "pixel", "v": self.version, "data": data})
-        if self._zones:
-            data = [v for (zx, zy), (p, h) in self._zones.items() for v in (zx, zy, p, h)]
-            messages.append({"type": "zone_price", "v": self.version, "data": data})
+        if self._prices_reset:
+            # Einzelpreise sind durch den Neuladen-Befehl überholt.
+            messages.append({"type": "prices_reset", "v": self.version})
+        elif self._prices:
+            data = [v for (x, y), p in self._prices.items() for v in (x, y, p)]
+            messages.append({"type": "price", "v": self.version, "data": data})
         self._pixels = {}
-        self._zones = {}
+        self._prices = {}
+        self._prices_reset = False
         for msg in messages:
             self.broadcast(msg)
 
