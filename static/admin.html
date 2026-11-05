@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Pixel War – Admin</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="page">
+  <main class="content">
+    <p class="row left"><a href="/" data-i18n="guild.back"></a> <button id="lang-btn" type="button" class="ghost" data-i18n="lang.switch"></button></p>
+    <h1 data-i18n="admin.title"></h1>
+    <p class="muted"><code data-i18n="admin.formula"></code></p>
+
+    <!-- Zugang per HTTP Basic Auth (Benutzer "admin"). Der Browser fragt beim
+         Öffnen von /admin selbst nach dem Passwort und schickt es danach bei
+         jedem Aufruf von /api/admin/... automatisch mit. -->
+    <form id="params-form" class="card">
+      <label><span data-i18n="admin.base_cents"></span>
+        <input type="number" id="p-base_cents" min="1" max="10000" step="1" required>
+        <small class="muted" data-default="base_cents"></small></label>
+      <label><span data-i18n="admin.factor"></span>
+        <input type="number" id="p-factor" min="1" max="3" step="0.01" required>
+        <small class="muted" data-default="factor"></small></label>
+      <label><span data-i18n="admin.contagion"></span>
+        <input type="number" id="p-contagion" min="0" max="1" step="0.005" required>
+        <small class="muted" data-default="contagion"></small></label>
+      <label><span data-i18n="admin.cooldown_minutes"></span>
+        <input type="number" id="p-cooldown_minutes" min="1" max="1440" step="1" required>
+        <small class="muted" data-default="cooldown_minutes"></small></label>
+      <button type="submit" data-i18n="admin.save"></button>
+    </form>
+  </main>
+
+  <script src="/static/common.js"></script>
+  <script>
+    "use strict";
+    const FIELDS = ["base_cents", "factor", "contagion", "cooldown_minutes"];
+    let defaults = {};
+
+    function renderDefaults() {
+      document.querySelectorAll("[data-default]").forEach((el) => {
+        el.textContent = t("admin.default", { v: defaults[el.dataset.default] });
+      });
+    }
+
+    async function load() {
+      const r = await api("/api/admin/params");
+      defaults = r.defaults;
+      for (const f of FIELDS) $("p-" + f).value = r.params[f];
+      renderDefaults();
+    }
+
+    $("params-form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const body = {};
+      for (const f of FIELDS) body[f] = Number($("p-" + f).value);
+      try {
+        await api("/api/admin/params", { method: "PUT", body: JSON.stringify(body) });
+        toast(t("admin.saved"));
+        await load();
+      } catch (err) {
+        toast(errorText(err), 5000);
+      }
+    });
+
+    (async () => {
+      await loadLang(storedLang());
+      applyI18n();
+      $("lang-btn").addEventListener("click", () => setLang(I18N.lang === "en" ? "de" : "en"));
+      document.addEventListener("langchange", renderDefaults);
+      await load();
+    })();
+  </script>
+</body>
+</html>

@@ -1,0 +1,76 @@
+# Pixel War – zentrale Konfiguration.
+#
+# Alles, was man vor oder während des Events drehen will, steht hier und nicht
+# verstreut im Code. Alle Geldbeträge sind Ganzzahlen in Cent (Euro).
+# Eine andere Datei kann per Umgebungsvariable PIXELWAR_CONFIG angegeben werden.
+
+[server]
+# Entwicklungsmodus: aktiviert den FakeProvider (Guthaben ohne echte Zahlung)
+# und den Dev-Login (nur Name, kein Passwort). NIEMALS in Produktion.
+dev_mode = true
+db_path = "pixelwar.db"
+# Ordner für hochgeladene Dateien (Gildenbilder).
+data_dir = "data"
+# Schlüssel zum Signieren der Login-Cookies und Passwort fürs Admin-Panel
+# (Benutzername "admin"). In Produktion über die Umgebungsvariablen
+# PIXELWAR_SECRET und PIXELWAR_ADMIN_PASSWORD setzen – die haben Vorrang.
+secret_key = "dev-only-change-me"
+admin_password = "admin"
+
+[event]
+# Zeitpunkte in UTC (das "Z" am Ende heißt UTC).
+start = "2026-01-01T00:00:00Z"
+end = "2027-01-01T00:00:00Z"
+# Zeitzone, in der die Nachtpause gemeint ist (Deutschland: Sommer-/Winterzeit
+# wird automatisch berücksichtigt).
+timezone = "Europe/Berlin"
+# Optionale Nachtpause, in der weder gemalt noch aufgeladen werden kann.
+# Auskommentiert = keine Nachtpause.
+# night_pause = ["00:00", "08:00"]
+
+[canvas]
+size = 400        # 400 × 400 Pixel
+
+[pricing]
+# STANDARDWERTE. Während des Events werden sie im Admin-Panel (/admin) geändert;
+# die dort gesetzten Werte liegen in der Datenbank und haben Vorrang.
+#
+# preis_in_cent = round(base_cents * factor ** heat)
+base_cents = 2
+factor = 1.15
+# Beim Übermalen bekommt jeder der 8 Nachbarn so viel heat dazu.
+contagion = 0.02
+# Pro so vielen Minuten ohne Bemalung verliert ein Pixel 1 heat.
+cooldown_minutes = 30
+# Wie oft der Hintergrundjob nachschaut, ob Pixel abkühlen müssen.
+cooldown_check_seconds = 60
+
+[limits]
+pixels_per_second = 5
+# Obergrenze für die SUMME aller Aufladungen pro Account (Jugendschutz).
+max_total_topup_cents = 2500
+topup_packages_cents = [300, 1000, 2500]
+
+[guilds]
+creation_cents = 500     # Gilde gründen kostet 5 €
+image_max_kb = 2048      # maximale Dateigröße für Gildenbilder
+
+[realtime]
+# Pixeländerungen werden gesammelt und alle X ms als ein Paket verschickt.
+flush_interval_ms = 100
+# Wie viele Pakete ein langsamer Client im Rückstand sein darf, bevor er
+# getrennt wird (er verbindet sich dann neu und lädt den Stand frisch).
+client_queue_size = 100
+
+[palette]
+# Index 0 ist "leer" und kann nicht gemalt werden (wird weiß dargestellt).
+# Die Indizes 1–31 sind die malbaren Farben. Reihenfolge NICHT ändern, sobald
+# Pixel in der Datenbank liegen – dort steht nur der Index.
+colors = [
+  "#FFFFFF",
+  "#6D001A", "#BE0039", "#FF4500", "#FFA800", "#FFD635", "#00A368", "#00CC78",
+  "#7EED56", "#00756F", "#009EAA", "#00CCC0", "#2450A4", "#3690EA", "#51E9F4",
+  "#493AC1", "#6A5CFF", "#94B3FF", "#811E9F", "#B44AC0", "#E4ABFF", "#DE107F",
+  "#FF3881", "#FF99AA", "#6D482F", "#9C6926", "#FFB470", "#000000", "#515252",
+  "#898D90", "#D4D7D9", "#FFFFFF",
+]

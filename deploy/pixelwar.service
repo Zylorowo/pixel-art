@@ -1,0 +1,21 @@
+# systemd-Dienst: startet Pixel War beim Booten und nach Abstürzen neu.
+# Nach /etc/systemd/system/ kopieren, dann:
+#   systemctl daemon-reload && systemctl enable --now pixelwar
+[Unit]
+Description=Pixel War
+After=network.target
+
+[Service]
+User=pixelwar
+WorkingDirectory=/opt/pixelwar
+# Geheimnis NICHT in die config.toml schreiben, sondern hier bzw. in einer
+# EnvironmentFile mit Rechten 600.
+EnvironmentFile=/etc/pixelwar.env
+# WICHTIG: genau EIN Prozess (kein --workers). Leinwand, Rate-Limit und
+# WebSocket-Verteilung liegen im Speicher dieses einen Prozesses.
+ExecStart=/opt/pixelwar/.venv/bin/uvicorn pixelwar.main:create_app --factory --host 127.0.0.1 --port 8000 --proxy-headers
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

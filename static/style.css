@@ -1,0 +1,193 @@
+:root {
+  --bg: #1d1d24;
+  --panel: #2a2a33;
+  --field: #15151a;
+  --line: #44444f;
+  --text: #f1f1f4;
+  --muted: #a0a0ad;
+  --accent: #ff4500;
+  --ok: #3ccf6e;
+  --warn: #ffb470;
+  --guild: #888;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+a { color: #8fb4ff; }
+.muted { color: var(--muted); }
+.small { font-size: 12px; }
+.warn { color: var(--warn); font-size: 13px; }
+.ok { color: var(--ok); font-weight: 600; }
+
+button {
+  background: var(--accent);
+  color: #fff;
+  border: 0;
+  border-radius: 6px;
+  padding: 6px 12px;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+button:disabled { opacity: .4; cursor: default; }
+button.ghost { background: #4a4a55; }
+button.big { padding: 12px 22px; font-size: 16px; }
+
+input:not([type]), input[type=text], input[type=number], textarea {
+  background: var(--field); color: var(--text);
+  border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; font: inherit;
+}
+
+/* ---------------------------------------------------------------- Kopfzeile */
+
+#topbar {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  padding: 6px 10px; background: var(--panel);
+}
+.brand { font-size: 17px; font-weight: 800; color: var(--text); text-decoration: none; letter-spacing: .02em; }
+.navlink { color: var(--muted); text-decoration: none; }
+.navlink:hover { color: var(--text); }
+#lang-btn { padding: 4px 8px; font-size: 12px; }
+#account { margin-left: auto; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+#account input { width: 9em; }
+#me { display: inline-flex; gap: 8px; align-items: center; }
+.conn.on { color: var(--ok); }
+.conn.off { color: #d33; }
+
+.guild-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  color: var(--text); text-decoration: none; font-weight: 600;
+}
+.guild-chip::before {
+  content: ""; width: 10px; height: 10px; border-radius: 50%;
+  background: var(--guild); box-shadow: 0 0 0 1px rgba(255,255,255,.3);
+}
+
+#toast {
+  position: fixed; left: 50%; top: 35%; transform: translateX(-50%);
+  background: rgba(0,0,0,.88); padding: 8px 14px; border-radius: 8px; z-index: 10;
+  max-width: 90%; text-align: center; pointer-events: none;
+}
+
+/* ---------------------------------------------------------------- Leinwand */
+
+body.canvas-page {
+  display: flex; flex-direction: column;
+  height: 100dvh;                /* dvh: berücksichtigt die ein-/ausfahrende Adressleiste am Handy */
+  overflow: hidden;
+  overscroll-behavior: none;     /* kein "Pull to refresh" beim Verschieben */
+}
+#stage { position: relative; flex: 1; min-height: 0; }
+#board {
+  display: block; width: 100%; height: 100%;
+  touch-action: none;            /* Gesten gehen an unser JS, nicht an den Browser */
+  cursor: crosshair;
+}
+#board[data-tool="picker"] { cursor: copy; }
+#board[data-tool="info"] { cursor: help; }
+
+#hover-status {
+  position: absolute; left: 8px; bottom: 8px;
+  background: rgba(0,0,0,.75); padding: 4px 10px; border-radius: 6px;
+  font-variant-numeric: tabular-nums; pointer-events: none;
+}
+
+#bottombar { background: var(--panel); padding: 6px 8px; }
+#toolrow { display: flex; align-items: center; gap: 12px; margin-bottom: 6px; flex-wrap: wrap; }
+#tools { display: inline-flex; background: var(--field); border-radius: 8px; padding: 2px; }
+.tool { background: transparent; color: var(--muted); padding: 6px 10px; }
+.tool.active { background: #4a4a55; color: var(--text); }
+.toggle { display: inline-flex; gap: 4px; align-items: center; color: var(--muted); }
+
+#palette { display: flex; gap: 4px; overflow-x: auto; padding-bottom: 4px; scrollbar-width: thin; }
+.swatch {
+  flex: 0 0 28px; height: 28px; border-radius: 5px; padding: 0;
+  border: 2px solid rgba(255,255,255,.15);
+}
+.swatch.active { border-color: #fff; box-shadow: 0 0 0 2px var(--accent); }
+
+#actions { display: flex; align-items: center; gap: 10px; margin-top: 4px; }
+#info-line { flex: 1; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#paint-btn { min-width: 130px; padding: 10px 14px; }
+
+/* ---------------------------------------------------------------- Dialoge */
+
+dialog {
+  background: var(--panel); color: var(--text); border: 0; border-radius: 10px;
+  max-width: 380px; width: calc(100% - 32px);
+}
+dialog::backdrop { background: rgba(0,0,0,.6); }
+dialog h2 { margin-top: 0; }
+#topup-packages { display: flex; gap: 8px; margin: 12px 0; flex-wrap: wrap; }
+#topup-packages button { flex: 1; padding: 12px; font-size: 16px; }
+.age { display: flex; gap: 8px; align-items: flex-start; }
+.row { display: flex; justify-content: flex-end; gap: 8px; align-items: center; }
+.row.left { justify-content: flex-start; flex-wrap: wrap; }
+
+#pixel-details { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; margin: 0 0 12px; }
+#pixel-details dt { color: var(--muted); }
+#pixel-details dd { margin: 0; font-weight: 600; }
+
+/* ---------------------------------------------------------------- Inhaltsseiten (Gilden, Admin) */
+
+body.page { min-height: 100vh; }
+.content { max-width: 680px; margin: 0 auto; padding: 16px; }
+.card { background: var(--panel); border-radius: 10px; padding: 14px; margin: 14px 0; }
+form.card label, fieldset label { display: grid; gap: 4px; margin-bottom: 12px; }
+form.card textarea, form.card input:not([type=range]):not([type=file]) { width: 100%; }
+fieldset { border: 1px solid var(--line); border-radius: 8px; margin: 0 0 12px; }
+.slug-input { display: flex; align-items: center; gap: 2px; }
+.slug-input input { flex: 1; }
+#g-link { flex: 1; min-width: 0; }
+
+.guild-list { display: grid; gap: 6px; }
+.guild-row {
+  display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+  padding: 10px 12px; background: var(--panel); border-radius: 8px;
+  border-left: 6px solid var(--guild); color: var(--text); text-decoration: none;
+}
+.guild-row:hover { background: #33333e; }
+
+.guild-head { display: flex; gap: 16px; align-items: center; }
+.guild-head h1 { margin: 0; }
+.guild-head p { margin: 2px 0 0; }
+#g-image, .guild-avatar {
+  width: 96px; height: 96px; border-radius: 14px; flex: 0 0 96px;
+  border: 3px solid var(--guild);
+}
+.guild-avatar { background: var(--guild); }
+.guild-desc { white-space: pre-wrap; }
+.stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.stats div { background: var(--panel); border-radius: 8px; padding: 10px; text-align: center; }
+.stats b { display: block; font-size: 20px; }
+.stats span { color: var(--muted); font-size: 12px; }
+
+.hsv { display: grid; gap: 6px; }
+.hsv-preview { display: flex; align-items: center; gap: 10px; }
+.hsv-swatch { width: 44px; height: 44px; border-radius: 8px; border: 2px solid rgba(255,255,255,.3); }
+.hsv input[type=range] {
+  -webkit-appearance: none; appearance: none; width: 100%; height: 14px; border-radius: 7px; outline: none;
+}
+.hsv input[type=range]::-webkit-slider-thumb {
+  -webkit-appearance: none; width: 20px; height: 20px; border-radius: 50%;
+  background: #fff; border: 2px solid #000; cursor: pointer;
+}
+.hsv input[type=range]::-moz-range-thumb {
+  width: 18px; height: 18px; border-radius: 50%; background: #fff; border: 2px solid #000; cursor: pointer;
+}
+
+@media (max-width: 520px) {
+  #topbar { gap: 8px; }
+  #event-status { font-size: 12px; }
+  #me-handle { display: none; }   /* Gilde + Guthaben reichen am Handy */
+  .tool { padding: 6px 8px; }
+  .guild-head { align-items: flex-start; }
+  #g-image, .guild-avatar { width: 72px; height: 72px; flex-basis: 72px; }
+}

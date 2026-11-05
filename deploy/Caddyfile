@@ -1,0 +1,10 @@
+# Caddy holt sich das HTTPS-Zertifikat automatisch (Let's Encrypt).
+# Domain anpassen, Datei nach /etc/caddy/Caddyfile, dann `systemctl reload caddy`.
+pixelwar.gg, www.pixelwar.gg {
+	# Caddy leitet auch WebSocket-Verbindungen (/ws) automatisch weiter.
+	reverse_proxy 127.0.0.1:8000
+
+	# Statische Dateien komprimieren. /api/canvas ist schon gzip – Caddy
+	# erkennt den Content-Encoding-Header und packt es nicht doppelt.
+	encode zstd gzip
+}

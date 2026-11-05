@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <!-- user-scalable=no: Das Zoomen übernimmt unsere Leinwand selbst. Sonst
+       zoomt der Browser die ganze Seite mitsamt Menüs. -->
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <title>Pixel War</title>
+  <meta name="description" content="Pixel War – every pixel is a battlefield. pixelwar.gg">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="canvas-page">
+  <header id="topbar"></header>
+
+  <main id="stage">
+    <canvas id="board"></canvas>
+    <!-- Unten links: Koordinate und Preis unter dem Mauszeiger -->
+    <div id="hover-status" hidden></div>
+  </main>
+
+  <footer id="bottombar">
+    <div id="toolrow">
+      <div id="tools" role="radiogroup" data-i18n-title="tools.label">
+        <button type="button" class="tool active" data-tool="brush" role="radio"><span aria-hidden="true">🖌️</span> <span data-i18n="tools.brush"></span></button>
+        <button type="button" class="tool" data-tool="picker" role="radio"><span aria-hidden="true">💧</span> <span data-i18n="tools.picker"></span></button>
+        <button type="button" class="tool" data-tool="info" role="radio"><span aria-hidden="true">ℹ️</span> <span data-i18n="tools.info"></span></button>
+      </div>
+      <label class="toggle"><input type="checkbox" id="heat-toggle"> <span data-i18n="tools.price_map"></span></label>
+    </div>
+    <div id="palette" role="radiogroup" data-i18n-title="tools.palette"></div>
+    <div id="actions">
+      <span id="info-line"></span>
+      <button id="paint-btn" type="button" disabled></button>
+    </div>
+  </footer>
+
+  <dialog id="pixel-dialog">
+    <form method="dialog">
+      <h2 id="pixel-title"></h2>
+      <dl id="pixel-details"></dl>
+      <div class="row"><button type="submit" class="ghost" data-i18n="info.close"></button></div>
+    </form>
+  </dialog>
+
+  <script src="/static/common.js"></script>
+  <script src="/static/app.js"></script>
+</body>
+</html>
